@@ -1,5 +1,5 @@
 # BMS
-
+BMS development roadmap using STM32L476RG
 
 ## Initial Targets:
 - [ ] Create main project and forks for every feature
