@@ -1,5 +1,5 @@
 # BMS
-BMS development roadmap using STM32L476RG
+BMS development roadmap using STM32L476RG, LTC6804-1 and LTC6820
 
 ## Initial Targets:
 - [x] Create main project and forks for every feature
