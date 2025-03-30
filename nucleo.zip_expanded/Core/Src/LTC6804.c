@@ -1,0 +1,2127 @@
+/*
+ * LTC6804.c
+ *
+ *  Created on: Mar 30, 2025
+ *      Author: verma
+ */
+
+
+#include "LTC6804.h"
+
+const uint16_t crc15Table[256] = {0x0,0xc599, 0xceab, 0xb32, 0xd8cf, 0x1d56, 0x1664, 0xd3fd, 0xf407, 0x319e, 0x3aac,  //!<precomputed CRC15 Table
+                                0xff35, 0x2cc8, 0xe951, 0xe263, 0x27fa, 0xad97, 0x680e, 0x633c, 0xa6a5, 0x7558, 0xb0c1,
+                                0xbbf3, 0x7e6a, 0x5990, 0x9c09, 0x973b, 0x52a2, 0x815f, 0x44c6, 0x4ff4, 0x8a6d, 0x5b2e,
+                                0x9eb7, 0x9585, 0x501c, 0x83e1, 0x4678, 0x4d4a, 0x88d3, 0xaf29, 0x6ab0, 0x6182, 0xa41b,
+                                0x77e6, 0xb27f, 0xb94d, 0x7cd4, 0xf6b9, 0x3320, 0x3812, 0xfd8b, 0x2e76, 0xebef, 0xe0dd,
+                                0x2544, 0x2be, 0xc727, 0xcc15, 0x98c, 0xda71, 0x1fe8, 0x14da, 0xd143, 0xf3c5, 0x365c,
+                                0x3d6e, 0xf8f7,0x2b0a, 0xee93, 0xe5a1, 0x2038, 0x7c2, 0xc25b, 0xc969, 0xcf0, 0xdf0d,
+                                0x1a94, 0x11a6, 0xd43f, 0x5e52, 0x9bcb, 0x90f9, 0x5560, 0x869d, 0x4304, 0x4836, 0x8daf,
+                                0xaa55, 0x6fcc, 0x64fe, 0xa167, 0x729a, 0xb703, 0xbc31, 0x79a8, 0xa8eb, 0x6d72, 0x6640,
+                                0xa3d9, 0x7024, 0xb5bd, 0xbe8f, 0x7b16, 0x5cec, 0x9975, 0x9247, 0x57de, 0x8423, 0x41ba,
+                                0x4a88, 0x8f11, 0x57c, 0xc0e5, 0xcbd7, 0xe4e, 0xddb3, 0x182a, 0x1318, 0xd681, 0xf17b,
+                                0x34e2, 0x3fd0, 0xfa49, 0x29b4, 0xec2d, 0xe71f, 0x2286, 0xa213, 0x678a, 0x6cb8, 0xa921,
+                                0x7adc, 0xbf45, 0xb477, 0x71ee, 0x5614, 0x938d, 0x98bf, 0x5d26, 0x8edb, 0x4b42, 0x4070,
+                                0x85e9, 0xf84, 0xca1d, 0xc12f, 0x4b6, 0xd74b, 0x12d2, 0x19e0, 0xdc79, 0xfb83, 0x3e1a, 0x3528,
+                                0xf0b1, 0x234c, 0xe6d5, 0xede7, 0x287e, 0xf93d, 0x3ca4, 0x3796, 0xf20f, 0x21f2, 0xe46b, 0xef59,
+                                0x2ac0, 0xd3a, 0xc8a3, 0xc391, 0x608, 0xd5f5, 0x106c, 0x1b5e, 0xdec7, 0x54aa, 0x9133, 0x9a01,
+                                0x5f98, 0x8c65, 0x49fc, 0x42ce, 0x8757, 0xa0ad, 0x6534, 0x6e06, 0xab9f, 0x7862, 0xbdfb, 0xb6c9,
+                                0x7350, 0x51d6, 0x944f, 0x9f7d, 0x5ae4, 0x8919, 0x4c80, 0x47b2, 0x822b, 0xa5d1, 0x6048, 0x6b7a,
+                                0xaee3, 0x7d1e, 0xb887, 0xb3b5, 0x762c, 0xfc41, 0x39d8, 0x32ea, 0xf773, 0x248e, 0xe117, 0xea25,
+                                0x2fbc, 0x846, 0xcddf, 0xc6ed, 0x374, 0xd089, 0x1510, 0x1e22, 0xdbbb, 0xaf8, 0xcf61, 0xc453,
+                                0x1ca, 0xd237, 0x17ae, 0x1c9c, 0xd905, 0xfeff, 0x3b66, 0x3054, 0xf5cd, 0x2630, 0xe3a9, 0xe89b,
+                                0x2d02, 0xa76f, 0x62f6, 0x69c4, 0xac5d, 0x7fa0, 0xba39, 0xb10b, 0x7492, 0x5368, 0x96f1, 0x9dc3,
+                                0x585a, 0x8ba7, 0x4e3e, 0x450c, 0x8095
+                               };
+
+void wakeup_idle(uint8_t total_ic)
+{
+  for (int i =0; i<total_ic; i++)
+  {
+    cs_low();
+    //delayMicroseconds(2); //Guarantees the isoSPI will be in ready mode
+    spi_read_byte(0xff);
+    cs_high();
+  }
+}
+
+//Generic wakeup commannd to wake the LTC6804 from sleep
+void wakeup_sleep(uint8_t total_ic)
+{
+  for (int i =0; i<total_ic; i++)
+  {
+    cs_low();
+    HAL_Delay(1); // Guarantees the LTC6804 will be in standby
+		cs_high();
+  }
+}
+
+//Generic function to write 68xx commands. Function calculated PEC for tx_cmd data
+void cmd_68(uint8_t tx_cmd[2])
+{
+  uint8_t cmd[4];
+  uint16_t cmd_pec;
+  uint8_t md_bits;
+
+  cmd[0] = tx_cmd[0];
+  cmd[1] =  tx_cmd[1];
+  cmd_pec = pec15_calc(2, cmd);
+  cmd[2] = (uint8_t)(cmd_pec >> 8);
+  cmd[3] = (uint8_t)(cmd_pec);
+
+  cs_low();
+  spi_write_array(4,cmd);
+  cs_high();
+}
+
+//Generic function to write 68xx commands and write payload data. Function calculated PEC for tx_cmd data
+void write_68(uint8_t total_ic , uint8_t tx_cmd[2], uint8_t data[])
+{
+  const uint8_t BYTES_IN_REG = 6;
+  const uint8_t CMD_LEN = 4+(8*total_ic);
+  uint8_t *cmd;
+  uint16_t data_pec;
+  uint16_t cmd_pec;
+  uint8_t cmd_index;
+
+  cmd = (uint8_t *)malloc(CMD_LEN*sizeof(uint8_t));
+  cmd[0] = tx_cmd[0];
+  cmd[1] = tx_cmd[1];
+  cmd_pec = pec15_calc(2, cmd);
+  cmd[2] = (uint8_t)(cmd_pec >> 8);
+  cmd[3] = (uint8_t)(cmd_pec);
+  cmd_index = 4;
+  for (uint8_t current_ic = total_ic; current_ic > 0; current_ic--)       // executes for each LTC680x in daisy chain, this loops starts with
+  {
+    // the last IC on the stack. The first configuration written is
+    // received by the last IC in the daisy chain
+
+    for (uint8_t current_byte = 0; current_byte < BYTES_IN_REG; current_byte++)
+    {
+      cmd[cmd_index] = data[((current_ic-1)*6)+current_byte];
+      cmd_index = cmd_index + 1;
+    }
+
+    data_pec = (uint16_t)pec15_calc(BYTES_IN_REG, &data[(current_ic-1)*6]);    // calculating the PEC for each Iss configuration register data
+    cmd[cmd_index] = (uint8_t)(data_pec >> 8);
+    cmd[cmd_index + 1] = (uint8_t)data_pec;
+    cmd_index = cmd_index + 2;
+  }
+
+
+  cs_low();
+  spi_write_array(CMD_LEN, cmd);
+  cs_high();
+  free(cmd);
+}
+
+//Generic function to write 68xx commands and read data. Function calculated PEC for tx_cmd data
+int8_t read_68( uint8_t total_ic, uint8_t tx_cmd[2], uint8_t *rx_data)
+{
+  const uint8_t BYTES_IN_REG = 8;
+  uint8_t cmd[4];
+  uint8_t data[256];
+  int8_t pec_error = 0;
+  uint16_t cmd_pec;
+  uint16_t data_pec;
+  uint16_t received_pec;
+
+  //data = (uint8_t *) malloc((8*total_ic)*sizeof(uint8_t)); // This is a problem because it can fail
+
+  cmd[0] = tx_cmd[0];
+  cmd[1] = tx_cmd[1];
+  cmd_pec = pec15_calc(2, cmd);
+  cmd[2] = (uint8_t)(cmd_pec >> 8);
+  cmd[3] = (uint8_t)(cmd_pec);
+
+
+  cs_low();
+  spi_write_read(cmd, 4, data, (BYTES_IN_REG*total_ic));         //Read the configuration data of all ICs on the daisy chain into
+  cs_high();                          //rx_data[] array
+
+  for (uint8_t current_ic = 0; current_ic < total_ic; current_ic++)       //executes for each LTC680x in the daisy chain and packs the data
+  {
+    //into the r_comm array as well as check the received Config data
+    //for any bit errors
+    for (uint8_t current_byte = 0; current_byte < BYTES_IN_REG; current_byte++)
+    {
+      rx_data[(current_ic*8)+current_byte] = data[current_byte + (current_ic*BYTES_IN_REG)];
+    }
+    received_pec = (rx_data[(current_ic*8)+6]<<8) + rx_data[(current_ic*8)+7];
+    data_pec = pec15_calc(6, &rx_data[current_ic*8]);
+    if (received_pec != data_pec)
+    {
+      pec_error = -1;
+    }
+  }
+
+
+  return(pec_error);
+}
+
+
+/*
+  Calculates  and returns the CRC15
+  */
+uint16_t pec15_calc(uint8_t len, //Number of bytes that will be used to calculate a PEC
+                    uint8_t *data //Array of data that will be used to calculate  a PEC
+                   )
+{
+  uint16_t remainder,addr;
+
+  remainder = 16;//initialize the PEC
+  for (uint8_t i = 0; i<len; i++) // loops for each byte in data array
+  {
+    addr = ((remainder>>7)^data[i])&0xff;//calculate PEC table address
+
+    remainder = (remainder<<8)^crc15Table[addr];
+  }
+  return(remainder*2);//The CRC15 has a 0 in the LSB so the remainder must be multiplied by 2
+}
+
+//Starts cell voltage conversion
+void LTC680x_adcv(
+  uint8_t MD, //ADC Mode
+  uint8_t DCP, //Discharge Permit
+  uint8_t CH //Cell Channels to be measured
+)
+{
+  uint8_t cmd[4];
+  uint8_t md_bits;
+
+  md_bits = (MD & 0x02) >> 1;
+  cmd[0] = md_bits + 0x02;
+  md_bits = (MD & 0x01) << 7;
+  cmd[1] =  md_bits + 0x60 + (DCP<<4) + CH;
+  cmd_68(cmd);
+}
+
+
+//Starts cell voltage and SOC conversion
+void LTC680x_adcvsc(
+  uint8_t MD, //ADC Mode
+  uint8_t DCP //Discharge Permit
+)
+{
+  uint8_t cmd[4];
+  uint8_t md_bits;
+  md_bits = (MD & 0x02) >> 1;
+  cmd[0] = md_bits | 0x04;
+  md_bits = (MD & 0x01) << 7;
+  cmd[1] =  md_bits | 0x60 | (DCP<<4) | 0x07;
+  cmd_68(cmd);
+
+}
+
+// Starts cell voltage  and GPIO 1&2 conversion
+void LTC680x_adcvax(
+  uint8_t MD, //ADC Mode
+  uint8_t DCP //Discharge Permit
+)
+{
+  uint8_t cmd[4];
+  uint8_t md_bits;
+  md_bits = (MD & 0x02) >> 1;
+  cmd[0] = md_bits | 0x04;
+  md_bits = (MD & 0x01) << 7;
+  cmd[1] =  md_bits | ((DCP&0x01)<<4) + 0x6F;
+  cmd_68(cmd);
+}
+
+//Starts cell voltage overlap conversion
+void LTC680x_adol(
+  uint8_t MD, //ADC Mode
+  uint8_t DCP //Discharge Permit
+)
+{
+  uint8_t cmd[4];
+  uint8_t md_bits;
+  md_bits = (MD & 0x02) >> 1;
+  cmd[0] = md_bits + 0x02;
+  md_bits = (MD & 0x01) << 7;
+  cmd[1] =  md_bits + (DCP<<4) +0x01;
+  cmd_68(cmd);
+}
+
+//Starts cell voltage self test conversion
+void LTC680x_cvst(
+  uint8_t MD, //ADC Mode
+  uint8_t ST //Self Test
+)
+{
+  uint8_t cmd[2];
+  uint8_t md_bits;
+
+  md_bits = (MD & 0x02) >> 1;
+  cmd[0] = md_bits + 0x02;
+  md_bits = (MD & 0x01) << 7;
+  cmd[1] =  md_bits + ((ST)<<5) +0x07;
+  cmd_68(cmd);
+
+}
+
+//Start an Auxiliary Register Self Test Conversion
+void LTC680x_axst(
+  uint8_t MD, //ADC Mode
+  uint8_t ST //Self Test
+)
+{
+  uint8_t cmd[4];
+  uint8_t md_bits;
+
+  md_bits = (MD & 0x02) >> 1;
+  cmd[0] = md_bits + 0x04;
+  md_bits = (MD & 0x01) << 7;
+  cmd[1] =  md_bits + ((ST&0x03)<<5) +0x07;
+  cmd_68(cmd);
+
+}
+
+//Start a Status Register Self Test Conversion
+void LTC680x_statst(
+  uint8_t MD, //ADC Mode
+  uint8_t ST //Self Test
+)
+{
+  uint8_t cmd[2];
+  uint8_t md_bits;
+
+  md_bits = (MD & 0x02) >> 1;
+  cmd[0] = md_bits + 0x04;
+  md_bits = (MD & 0x01) << 7;
+  cmd[1] =  md_bits + ((ST&0x03)<<5) +0x0F;
+  cmd_68(cmd);
+
+}
+
+//Sends the poll adc command
+uint8_t LTC680x_pladc()
+{
+  uint8_t cmd[4];
+  uint8_t adc_state = 0xFF;
+  uint16_t cmd_pec;
+
+  cmd[0] = 0x07;
+  cmd[1] = 0x14;
+  cmd_pec = pec15_calc(2, cmd);
+  cmd[2] = (uint8_t)(cmd_pec >> 8);
+  cmd[3] = (uint8_t)(cmd_pec);
+
+
+  cs_low();
+  spi_write_array(4,cmd);
+	//adc_state = spi_read_byte(0xFF);
+
+  cs_high();
+  return(adc_state);
+}
+
+//This function will block operation until the ADC has finished it's conversion
+uint32_t LTC680x_pollAdc()
+{
+  uint32_t counter = 0;
+  uint8_t finished = 0;
+  uint8_t current_time = 0;
+  uint8_t cmd[4];
+  uint16_t cmd_pec;
+
+
+  cmd[0] = 0x07;
+  cmd[1] = 0x14;
+  cmd_pec = pec15_calc(2, cmd);
+  cmd[2] = (uint8_t)(cmd_pec >> 8);
+  cmd[3] = (uint8_t)(cmd_pec);
+
+  cs_low();
+  spi_write_array(4,cmd);
+
+  while ((counter<200000)&&(finished == 0))
+  {
+    current_time = spi_read_byte(0xff);
+    if (current_time>0)
+    {
+      finished = 1;
+    }
+    else
+    {
+      counter = counter + 10;
+    }
+  }
+
+  cs_high();
+
+
+  return(counter);
+}
+
+//Start a GPIO and Vref2 Conversion
+void LTC680x_adax(
+  uint8_t MD, //ADC Mode
+  uint8_t CHG //GPIO Channels to be measured)
+)
+{
+  uint8_t cmd[4];
+  uint8_t md_bits;
+
+  md_bits = (MD & 0x02) >> 1;
+  cmd[0] = md_bits + 0x04;
+  md_bits = (MD & 0x01) << 7;
+  cmd[1] = md_bits + 0x60 + CHG ;
+  cmd_68(cmd);
+
+}
+
+//Start an GPIO Redundancy test
+void LTC680x_adaxd(
+  uint8_t MD, //ADC Mode
+  uint8_t CHG //GPIO Channels to be measured)
+)
+{
+  uint8_t cmd[4];
+  uint8_t md_bits;
+
+  md_bits = (MD & 0x02) >> 1;
+  cmd[0] = md_bits + 0x04;
+  md_bits = (MD & 0x01) << 7;
+  cmd[1] = md_bits + CHG ;
+  cmd_68(cmd);
+}
+
+//Start a Status ADC Conversion
+void LTC680x_adstat(
+  uint8_t MD, //ADC Mode
+  uint8_t CHST //GPIO Channels to be measured
+)
+{
+  uint8_t cmd[4];
+  uint8_t md_bits;
+
+  md_bits = (MD & 0x02) >> 1;
+  cmd[0] = md_bits + 0x04;
+  md_bits = (MD & 0x01) << 7;
+  cmd[1] = md_bits + 0x68 + CHST ;
+  cmd_68(cmd);
+}
+
+// Start a Status register redundancy test Conversion
+void LTC680x_adstatd(
+  uint8_t MD, //ADC Mode
+  uint8_t CHST //GPIO Channels to be measured
+)
+{
+  uint8_t cmd[2];
+  uint8_t md_bits;
+
+  md_bits = (MD & 0x02) >> 1;
+  cmd[0] = md_bits + 0x04;
+  md_bits = (MD & 0x01) << 7;
+  cmd[1] = md_bits + 0x08 + CHST ;
+  cmd_68(cmd);
+
+}
+
+
+// Start an open wire Conversion
+void LTC680x_adow(
+  uint8_t MD, //ADC Mode
+  uint8_t PUP //Discharge Permit
+)
+{
+  uint8_t cmd[2];
+  uint8_t md_bits;
+  md_bits = (MD & 0x02) >> 1;
+  cmd[0] = md_bits + 0x02;
+  md_bits = (MD & 0x01) << 7;
+  cmd[1] =  md_bits + 0x28 + (PUP<<6) ;//+ CH;
+  cmd_68(cmd);
+}
+
+// Reads the raw cell voltage register data
+void LTC680x_rdcv_reg(uint8_t reg, //Determines which cell voltage register is read back
+                      uint8_t total_ic, //the number of ICs in the
+                      uint8_t *data //An array of the unparsed cell codes
+                     )
+{
+  const uint8_t REG_LEN = 8; //number of bytes in each ICs register + 2 bytes for the PEC
+  uint8_t cmd[4];
+  uint16_t cmd_pec;
+
+  if (reg == 1)     //1: RDCVA
+  {
+    cmd[1] = 0x04;
+    cmd[0] = 0x00;
+  }
+  else if (reg == 2) //2: RDCVB
+  {
+    cmd[1] = 0x06;
+    cmd[0] = 0x00;
+  }
+  else if (reg == 3) //3: RDCVC
+  {
+    cmd[1] = 0x08;
+    cmd[0] = 0x00;
+  }
+  else if (reg == 4) //4: RDCVD
+  {
+    cmd[1] = 0x0A;
+    cmd[0] = 0x00;
+  }
+  else if (reg == 5) //4: RDCVE
+  {
+    cmd[1] = 0x09;
+    cmd[0] = 0x00;
+  }
+  else if (reg == 6) //4: RDCVF
+  {
+    cmd[1] = 0x0B;
+    cmd[0] = 0x00;
+  }
+
+
+  cmd_pec = pec15_calc(2, cmd);
+  cmd[2] = (uint8_t)(cmd_pec >> 8);
+  cmd[3] = (uint8_t)(cmd_pec);
+
+  cs_low();
+  spi_write_read(cmd,4,data,(REG_LEN*total_ic));
+  cs_high();
+
+}
+
+//helper function that parses voltage measurement registers
+int8_t parse_cells(uint8_t current_ic, uint8_t cell_reg, uint8_t cell_data[], uint16_t *cell_codes, uint8_t *ic_pec)
+{
+
+  const uint8_t BYT_IN_REG = 6;
+  const uint8_t CELL_IN_REG = 3;
+  int8_t pec_error = 0;
+  uint16_t parsed_cell;
+  uint16_t received_pec;
+  uint16_t data_pec;
+  uint8_t data_counter = current_ic*NUM_RX_BYT; //data counter
+
+
+  for (uint8_t current_cell = 0; current_cell<CELL_IN_REG; current_cell++)  // This loop parses the read back data into cell voltages, it
+  {
+    // loops once for each of the 3 cell voltage codes in the register
+
+    parsed_cell = cell_data[data_counter] + (cell_data[data_counter + 1] << 8);//Each cell code is received as two bytes and is combined to
+    // create the parsed cell voltage code
+    cell_codes[current_cell  + ((cell_reg - 1) * CELL_IN_REG)] = parsed_cell;
+    data_counter = data_counter + 2;                       //Because cell voltage codes are two bytes the data counter
+    //must increment by two for each parsed cell code
+  }
+
+  received_pec = (cell_data[data_counter] << 8) | cell_data[data_counter+1]; //The received PEC for the current_ic is transmitted as the 7th and 8th
+  //after the 6 cell voltage data bytes
+  data_pec = pec15_calc(BYT_IN_REG, &cell_data[(current_ic) * NUM_RX_BYT]);
+
+  if (received_pec != data_pec)
+  {
+    pec_error = 1;                             //The pec_error variable is simply set negative if any PEC errors
+    ic_pec[cell_reg-1]=1;
+  }
+  else
+  {
+    ic_pec[cell_reg-1]=0;
+  }
+  data_counter=data_counter+2;
+  return(pec_error);
+}
+
+/*
+The function reads a single GPIO voltage register and stores the read data
+in the *data point as a byte array. This function is rarely used outside of
+the LTC6804_rdaux() command.
+*/
+void LTC680x_rdaux_reg(uint8_t reg, //Determines which GPIO voltage register is read back
+                       uint8_t total_ic, //The number of ICs in the system
+                       uint8_t *data //Array of the unparsed auxiliary codes
+                      )
+{
+  const uint8_t REG_LEN = 8; // number of bytes in the register + 2 bytes for the PEC
+  uint8_t cmd[4];
+  uint16_t cmd_pec;
+
+
+  if (reg == 1)     //Read back auxiliary group A
+  {
+    cmd[1] = 0x0C;
+    cmd[0] = 0x00;
+  }
+  else if (reg == 2)  //Read back auxiliary group B
+  {
+    cmd[1] = 0x0e;
+    cmd[0] = 0x00;
+  }
+  else if (reg == 3)  //Read back auxiliary group C
+  {
+    cmd[1] = 0x0D;
+    cmd[0] = 0x00;
+  }
+  else if (reg == 4)  //Read back auxiliary group D
+  {
+    cmd[1] = 0x0F;
+    cmd[0] = 0x00;
+  }
+  else          //Read back auxiliary group A
+  {
+    cmd[1] = 0x0C;
+    cmd[0] = 0x00;
+  }
+
+  cmd_pec = pec15_calc(2, cmd);
+  cmd[2] = (uint8_t)(cmd_pec >> 8);
+  cmd[3] = (uint8_t)(cmd_pec);
+
+  cs_low();
+  spi_write_read(cmd,4,data,(REG_LEN*total_ic));
+  cs_high();
+
+}
+
+/*
+The function reads a single stat  register and stores the read data
+in the *data point as a byte array. This function is rarely used outside of
+the LTC6804_rdstat() command.
+*/
+void LTC680x_rdstat_reg(uint8_t reg, //Determines which stat register is read back
+                        uint8_t total_ic, //The number of ICs in the system
+                        uint8_t *data //Array of the unparsed stat codes
+                       )
+{
+  const uint8_t REG_LEN = 8; // number of bytes in the register + 2 bytes for the PEC
+  uint8_t cmd[4];
+  uint16_t cmd_pec;
+
+
+  if (reg == 1)     //Read back statiliary group A
+  {
+    cmd[1] = 0x10;
+    cmd[0] = 0x00;
+  }
+  else if (reg == 2)  //Read back statiliary group B
+  {
+    cmd[1] = 0x12;
+    cmd[0] = 0x00;
+  }
+
+  else          //Read back statiliary group A
+  {
+    cmd[1] = 0x10;
+    cmd[0] = 0x00;
+  }
+
+  cmd_pec = pec15_calc(2, cmd);
+  cmd[2] = (uint8_t)(cmd_pec >> 8);
+  cmd[3] = (uint8_t)(cmd_pec);
+
+  cs_low();
+  spi_write_read(cmd,4,data,(REG_LEN*total_ic));
+  cs_high();
+
+}
+
+/*
+The command clears the cell voltage registers and intiallizes
+all values to 1. The register will read back hexadecimal 0xFF
+after the command is sent.
+*/
+void LTC680x_clrcell()
+{
+  uint8_t cmd[2]= {0x07 , 0x11};
+  cmd_68(cmd);
+}
+
+
+/*
+The command clears the Auxiliary registers and initializes
+all values to 1. The register will read back hexadecimal 0xFF
+after the command is sent.
+*/
+void LTC680x_clraux()
+{
+  uint8_t cmd[2]= {0x07 , 0x12};
+  cmd_68(cmd);
+}
+
+
+/*
+The command clears the Stat registers and intiallizes
+all values to 1. The register will read back hexadecimal 0xFF
+after the command is sent.
+
+*/
+void LTC680x_clrstat(){
+  uint8_t cmd[2]= {0x07 , 0x13};
+  cmd_68(cmd);
+}
+/*
+The command clears the Sctrl registers and initializes
+all values to 0. The register will read back hexadecimal 0x00
+after the command is sent.
+*/
+void LTC680x_clrsctrl(){
+  uint8_t cmd[2]= {0x00 , 0x18};
+  cmd_68(cmd);
+}
+
+//Starts the Mux Decoder diagnostic self test
+void LTC680x_diagn(){
+  uint8_t cmd[2] = {0x07 , 0x15};
+  cmd_68(cmd);
+}
+
+//Reads and parses the LTC680x cell voltage registers.
+uint8_t LTC680x_rdcv(uint8_t reg, // Controls which cell voltage register is read back.
+                     uint8_t total_ic, // the number of ICs in the system
+                     cell_asic ic[] // Array of the parsed cell codes
+                    )
+{
+  int8_t pec_error = 0;
+  uint8_t *cell_data;
+  uint8_t c_ic = 0;
+  cell_data = (uint8_t *) malloc((NUM_RX_BYT*total_ic)*sizeof(uint8_t));
+
+  if (reg == 0)
+  {
+    for (uint8_t cell_reg = 1; cell_reg<ic[0].ic_reg.num_cv_reg+1; cell_reg++)                   //executes once for each of the LTC6804 cell voltage registers
+    {
+      LTC680x_rdcv_reg(cell_reg, total_ic,cell_data );
+      for (int current_ic = 0; current_ic<total_ic; current_ic++)
+      {
+        if (ic->isospi_reverse == false)
+        {
+          c_ic = current_ic;
+        }
+        else
+        {
+          c_ic = total_ic - current_ic - 1;
+        }
+        pec_error = pec_error + parse_cells(current_ic,cell_reg, cell_data,
+                                            &ic[c_ic].cells.c_codes[0],
+                                            &ic[c_ic].cells.pec_match[0]);
+      }
+    }
+  }
+
+  else
+  {
+	  LTC680x_rdcv_reg(reg, total_ic,cell_data);
+
+    for (int current_ic = 0; current_ic<total_ic; current_ic++)
+    {
+      if (ic->isospi_reverse == false)
+      {
+        c_ic = current_ic;
+      }
+      else
+      {
+        c_ic = total_ic - current_ic - 1;
+      }
+      pec_error = pec_error + parse_cells(current_ic,reg, &cell_data[8*c_ic],
+                                          &ic[c_ic].cells.c_codes[0],
+                                          &ic[c_ic].cells.pec_match[0]);
+    }
+  }
+  LTC680x_check_pec(total_ic,CELL,ic);
+  free(cell_data);
+  return(pec_error);
+}
+
+
+
+/*
+The function is used
+to read the  parsed GPIO codes of the LTC6804. This function will send the requested
+read commands parse the data and store the gpio voltages in aux_codes variable
+*/
+int8_t LTC680x_rdaux(uint8_t reg, //Determines which GPIO voltage register is read back.
+                     uint8_t total_ic,//the number of ICs in the system
+                     cell_asic ic[]//A two dimensional array of the gpio voltage codes.
+                    )
+{
+  uint8_t *data;
+  int8_t pec_error = 0;
+  uint8_t c_ic =0;
+  data = (uint8_t *) malloc((NUM_RX_BYT*total_ic)*sizeof(uint8_t));
+
+  if (reg == 0)
+  {
+    for (uint8_t gpio_reg = 1; gpio_reg<ic[0].ic_reg.num_gpio_reg+1; gpio_reg++)                 //executes once for each of the LTC6804 aux voltage registers
+    {
+      LTC680x_rdaux_reg(gpio_reg, total_ic,data);                 //Reads the raw auxiliary register data into the data[] array
+      for (int current_ic = 0; current_ic<total_ic; current_ic++)
+      {
+        if (ic->isospi_reverse == false)
+        {
+          c_ic = current_ic;
+        }
+        else
+        {
+          c_ic = total_ic - current_ic - 1;
+        }
+        pec_error = parse_cells(current_ic,gpio_reg, data,
+                                &ic[c_ic].aux.a_codes[0],
+                                &ic[c_ic].aux.pec_match[0]);
+
+      }
+    }
+  }
+  else{
+	  LTC680x_rdaux_reg(reg, total_ic, data);
+	  for (int current_ic = 0; current_ic<total_ic; current_ic++){
+		  if (ic->isospi_reverse == false){
+			c_ic = current_ic;
+		  }
+		  else{
+			c_ic = total_ic - current_ic - 1;
+		  }
+		  pec_error = parse_cells(current_ic,reg, data,
+								  &ic[c_ic].aux.a_codes[0],
+								  &ic[c_ic].aux.pec_match[0]);
+	  }
+
+  }
+  LTC680x_check_pec(total_ic,AUX,ic);
+  free(data);
+  return (pec_error);
+}
+
+// Reads and parses the LTC680x stat registers.
+int8_t LTC680x_rdstat(uint8_t reg, //Determines which Stat  register is read back.
+                      uint8_t total_ic,//the number of ICs in the system
+                      cell_asic ic[]
+                     )
+
+{
+
+  const uint8_t BYT_IN_REG = 6;
+  const uint8_t GPIO_IN_REG = 3;
+
+  uint8_t *data;
+  uint8_t data_counter = 0;
+  int8_t pec_error = 0;
+  uint16_t parsed_stat;
+  uint16_t received_pec;
+  uint16_t data_pec;
+  uint8_t c_ic = 0;
+  data = (uint8_t *) malloc((NUM_RX_BYT*total_ic)*sizeof(uint8_t));
+
+  if (reg == 0)
+  {
+
+    for (uint8_t stat_reg = 1; stat_reg< 3; stat_reg++)                      //executes once for each of the LTC6804 stat voltage registers
+    {
+      data_counter = 0;
+      LTC680x_rdstat_reg(stat_reg, total_ic,data);                            //Reads the raw statiliary register data into the data[] array
+
+      for (uint8_t current_ic = 0 ; current_ic < total_ic; current_ic++)      // executes for every LTC6804 in the daisy chain
+      {
+        if (ic->isospi_reverse == false)
+        {
+          c_ic = current_ic;
+        }
+        else
+        {
+          c_ic = total_ic - current_ic - 1;
+        }
+        // current_ic is used as the IC counter
+        if (stat_reg ==1)
+        {
+          for (uint8_t current_gpio = 0; current_gpio< GPIO_IN_REG; current_gpio++) // This loop parses the read back data into GPIO voltages, it
+          {
+            // loops once for each of the 3 gpio voltage codes in the register
+
+            parsed_stat = data[data_counter] + (data[data_counter+1]<<8);              //Each gpio codes is received as two bytes and is combined to
+            ic[c_ic].stat.stat_codes[current_gpio] = parsed_stat;
+            data_counter=data_counter+2;                                               //Because gpio voltage codes are two bytes the data counter
+
+          }
+        }
+        else if (stat_reg == 2)
+        {
+          parsed_stat = data[data_counter] + (data[data_counter+1]<<8);              //Each gpio codes is received as two bytes and is combined to
+          data_counter = data_counter +2;
+          ic[c_ic].stat.stat_codes[3] = parsed_stat;
+          ic[c_ic].stat.flags[0] = data[data_counter++];
+          ic[c_ic].stat.flags[1] = data[data_counter++];
+          ic[c_ic].stat.flags[2] = data[data_counter++];
+          ic[c_ic].stat.mux_fail[0] = (data[data_counter] & 0x02)>>1;
+          ic[c_ic].stat.thsd[0] = data[data_counter++] & 0x01;
+        }
+
+        received_pec = (data[data_counter]<<8)+ data[data_counter+1];          //The received PEC for the current_ic is transmitted as the 7th and 8th
+        //after the 6 gpio voltage data bytes
+        data_pec = pec15_calc(BYT_IN_REG, &data[current_ic*NUM_RX_BYT]);
+
+        if (received_pec != data_pec)
+        {
+          pec_error = -1; //The pec_error variable is simply set negative if any PEC errors
+          ic[c_ic].stat.pec_match[stat_reg-1]=1;
+          //are detected in the received serial data
+        }
+        else
+        {
+          ic[c_ic].stat.pec_match[stat_reg-1]=0;
+        }
+
+        data_counter=data_counter+2;                        //Because the transmitted PEC code is 2 bytes long the data_counter
+        //must be incremented by 2 bytes to point to the next ICs gpio voltage data
+      }
+
+
+    }
+
+  }
+  else
+  {
+
+	LTC680x_rdstat_reg(reg, total_ic, data);
+    for (int current_ic = 0 ; current_ic < total_ic; current_ic++)            // executes for every LTC6804 in the daisy chain
+    {
+      // current_ic is used as an IC counter
+      if (ic->isospi_reverse == false)
+      {
+        c_ic = current_ic;
+      }
+      else
+      {
+        c_ic = total_ic - current_ic - 1;
+      }
+      if (reg ==1)
+      {
+        for (uint8_t current_gpio = 0; current_gpio< GPIO_IN_REG; current_gpio++) // This loop parses the read back data into GPIO voltages, it
+        {
+          // loops once for each of the 3 gpio voltage codes in the register
+          parsed_stat = data[data_counter] + (data[data_counter+1]<<8);              //Each gpio codes is received as two bytes and is combined to
+          // create the parsed gpio voltage code
+
+          ic[c_ic].stat.stat_codes[current_gpio] = parsed_stat;
+          data_counter=data_counter+2;                        //Because gpio voltage codes are two bytes the data counter
+          //must increment by two for each parsed gpio voltage code
+
+        }
+      }
+      else if (reg == 2)
+      {
+        parsed_stat = data[data_counter++] + (data[data_counter++]<<8);              //Each gpio codes is received as two bytes and is combined to
+        ic[c_ic].stat.stat_codes[3] = parsed_stat;
+        ic[c_ic].stat.flags[0] = data[data_counter++];
+        ic[c_ic].stat.flags[1] = data[data_counter++];
+        ic[c_ic].stat.flags[2] = data[data_counter++];
+        ic[c_ic].stat.mux_fail[0] = (data[data_counter] & 0x02)>>1;
+        ic[c_ic].stat.thsd[0] = data[data_counter++] & 0x01;
+      }
+
+
+      received_pec = (data[data_counter]<<8)+ data[data_counter+1];          //The received PEC for the current_ic is transmitted as the 7th and 8th
+      //after the 6 gpio voltage data bytes
+      data_pec = pec15_calc(BYT_IN_REG, &data[current_ic*NUM_RX_BYT]);
+      if (received_pec != data_pec)
+      {
+        pec_error = -1;                             //The pec_error variable is simply set negative if any PEC errors
+        ic[c_ic].stat.pec_match[reg-1]=1;
+
+      }
+
+      data_counter=data_counter+2;
+    }
+  }
+  LTC680x_check_pec(total_ic,STAT,ic);
+  free(data);
+  return (pec_error);
+}
+
+//Write the LTC680x CFGRA
+void LTC680x_wrcfg(uint8_t total_ic, //The number of ICs being written to
+                   cell_asic ic[]
+                  )
+{
+  uint8_t cmd[2] = {0x00 , 0x01} ;
+  uint8_t write_buffer[256];
+  uint8_t write_count = 0;
+  uint8_t c_ic = 0;
+  for (uint8_t current_ic = 0; current_ic<total_ic; current_ic++)
+  {
+    if (ic->isospi_reverse == true)
+    {
+      c_ic = current_ic;
+    }
+    else
+    {
+      c_ic = total_ic - current_ic - 1;
+    }
+
+    for (uint8_t data = 0; data<6; data++)
+    {
+      write_buffer[write_count] = ic[c_ic].config.tx_data[data];
+      write_count++;
+    }
+  }
+  write_68(total_ic, cmd, write_buffer);
+}
+
+//Write the LTC680x CFGRB
+void LTC680x_wrcfgb(uint8_t total_ic, //The number of ICs being written to
+                    cell_asic ic[]
+                   )
+{
+  uint8_t cmd[2] = {0x00 , 0x24} ;
+  uint8_t write_buffer[256];
+  uint8_t write_count = 0;
+  uint8_t c_ic = 0;
+  for (uint8_t current_ic = 0; current_ic<total_ic; current_ic++)
+  {
+    if (ic->isospi_reverse == true)
+    {
+      c_ic = current_ic;
+    }
+    else
+    {
+      c_ic = total_ic - current_ic - 1;
+    }
+
+    for (uint8_t data = 0; data<6; data++)
+    {
+      write_buffer[write_count] = ic[c_ic].configb.tx_data[data];
+      write_count++;
+    }
+  }
+  write_68(total_ic, cmd, write_buffer);
+}
+
+//Read CFGA
+int8_t LTC680x_rdcfg(uint8_t total_ic, //Number of ICs in the system
+                     cell_asic ic[]
+                    )
+{
+  uint8_t cmd[2]= {0x00 , 0x02};
+  uint8_t read_buffer[256];
+  int8_t pec_error = 0;
+  uint16_t data_pec;
+  uint16_t calc_pec;
+  uint8_t c_ic = 0;
+  pec_error = read_68(total_ic, cmd, read_buffer);
+  for (uint8_t current_ic = 0; current_ic<total_ic; current_ic++)
+  {
+    if (ic->isospi_reverse == false)
+    {
+      c_ic = current_ic;
+    }
+    else
+    {
+      c_ic = total_ic - current_ic - 1;
+    }
+
+    for (int byte=0; byte<8; byte++)
+    {
+      ic[c_ic].config.rx_data[byte] = read_buffer[byte+(8*current_ic)];
+    }
+    calc_pec = pec15_calc(6,&read_buffer[8*current_ic]);
+    data_pec = read_buffer[7+(8*current_ic)] | (read_buffer[6+(8*current_ic)]<<8);
+    if (calc_pec != data_pec )
+    {
+      ic[c_ic].config.rx_pec_match = 1;
+    }
+    else ic[c_ic].config.rx_pec_match = 0;
+  }
+  LTC680x_check_pec(total_ic,CFGRA,ic);
+  return(pec_error);
+}
+
+//Reads CFGB
+int8_t LTC680x_rdcfgb(uint8_t total_ic, //Number of ICs in the system
+                      cell_asic ic[]
+                     )
+{
+  uint8_t cmd[2]= {0x00 , 0x26};
+  uint8_t read_buffer[256];
+  int8_t pec_error = 0;
+  uint16_t data_pec;
+  uint16_t calc_pec;
+  uint8_t c_ic = 0;
+  pec_error = read_68(total_ic, cmd, read_buffer);
+  for (uint8_t current_ic = 0; current_ic<total_ic; current_ic++)
+  {
+    if (ic->isospi_reverse == false)
+    {
+      c_ic = current_ic;
+    }
+    else
+    {
+      c_ic = total_ic - current_ic - 1;
+    }
+
+    for (int byte=0; byte<8; byte++)
+    {
+      ic[c_ic].configb.rx_data[byte] = read_buffer[byte+(8*current_ic)];
+    }
+    calc_pec = pec15_calc(6,&read_buffer[8*current_ic]);
+    data_pec = read_buffer[7+(8*current_ic)] | (read_buffer[6+(8*current_ic)]<<8);
+    if (calc_pec != data_pec )
+    {
+      ic[c_ic].configb.rx_pec_match = 1;
+    }
+    else ic[c_ic].configb.rx_pec_match = 0;
+  }
+  LTC680x_check_pec(total_ic,CFGRB,ic);
+  return(pec_error);
+}
+
+//Looks up the result pattern for digital filter self test
+uint16_t LTC680x_st_lookup(
+  uint8_t MD, //ADC Mode
+  uint8_t ST //Self Test
+)
+{
+  uint16_t test_pattern = 0;
+  if (MD == 1)
+  {
+    if (ST == 1)
+    {
+      test_pattern = 0x9565;
+    }
+    else
+    {
+      test_pattern = 0x6A9A;
+    }
+  }
+  else
+  {
+    if (ST == 1)
+    {
+      test_pattern = 0x9555;
+    }
+    else
+    {
+      test_pattern = 0x6AAA;
+    }
+  }
+  return(test_pattern);
+}
+
+//Clears all of the DCC bits in the configuration registers
+void clear_discharge(uint8_t total_ic, cell_asic ic[])
+{
+  for (int i=0; i<total_ic; i++)
+  {
+    ic[i].config.tx_data[4] = 0;
+    ic[i].config.tx_data[5] = 0;
+  }
+}
+
+// Runs the Digital Filter Self Test
+int16_t LTC680x_run_cell_adc_st(uint8_t adc_reg,uint8_t total_ic, cell_asic ic[])
+{
+  int16_t error = 0;
+  uint16_t expected_result = 0;
+  for (int self_test = 1; self_test<3; self_test++)
+  {
+
+    expected_result = LTC680x_st_lookup(2,self_test);
+    wakeup_idle(total_ic);
+    switch (adc_reg)
+    {
+      case CELL:
+        wakeup_idle(total_ic);
+        LTC680x_clrcell();
+        LTC680x_cvst(2,self_test);
+        LTC680x_pollAdc();//this isn't working
+        wakeup_idle(total_ic);
+        error = LTC680x_rdcv(0, total_ic,ic);
+        for (int cic = 0; cic < total_ic; cic++)
+        {
+          for (int channel=0; channel< ic[cic].ic_reg.cell_channels; channel++)
+          {
+            if (ic[cic].cells.c_codes[channel] != expected_result)
+            {
+              error = error+1;
+            }
+          }
+        }
+        break;
+      case AUX:
+        error = 0;
+        wakeup_idle(total_ic);
+        LTC680x_clraux();
+        LTC680x_axst(2,self_test);
+        LTC680x_pollAdc();
+				HAL_Delay(10);
+        wakeup_idle(total_ic);
+        LTC680x_rdaux(0, total_ic,ic);
+        for (int cic = 0; cic < total_ic; cic++)
+        {
+          for (int channel=0; channel< ic[cic].ic_reg.aux_channels; channel++)
+          {
+            if (ic[cic].aux.a_codes[channel] != expected_result)
+            {
+              error = error+1;
+            }
+          }
+        }
+        break;
+      case STAT:
+        wakeup_idle(total_ic);
+        LTC680x_clrstat();
+        LTC680x_statst(2,self_test);
+        LTC680x_pollAdc();
+        wakeup_idle(total_ic);
+        error = LTC680x_rdstat(0,total_ic,ic);
+        for (int cic = 0; cic < total_ic; cic++)
+        {
+          for (int channel=0; channel< ic[cic].ic_reg.stat_channels; channel++)
+          {
+            if (ic[cic].stat.stat_codes[channel] != expected_result)
+            {
+              error = error+1;
+            }
+          }
+        }
+        break;
+
+      default:
+        error = -1;
+        break;
+    }
+  }
+  return(error);
+}
+
+//runs the redundancy self test
+int16_t LTC680x_run_adc_redundancy_st(uint8_t adc_mode, uint8_t adc_reg, uint8_t total_ic, cell_asic ic[])
+{
+  int16_t error = 0;
+  for (int self_test = 1; self_test<3; self_test++)
+  {
+    wakeup_idle(total_ic);
+    switch (adc_reg)
+    {
+      case AUX:
+    	LTC680x_clraux();
+    	LTC680x_adaxd(adc_mode,AUX_CH_ALL);
+    	LTC680x_pollAdc();
+        wakeup_idle(total_ic);
+        error = LTC680x_rdaux(0, total_ic,ic);
+        for (int cic = 0; cic < total_ic; cic++)
+        {
+          for (int channel=0; channel< ic[cic].ic_reg.aux_channels; channel++)
+          {
+            if (ic[cic].aux.a_codes[channel] >= 65280)
+            {
+              error = error+1;
+            }
+          }
+        }
+        break;
+      case STAT:
+    	LTC680x_clrstat();
+    	LTC680x_adstatd(adc_mode,STAT_CH_ALL);
+    	LTC680x_pollAdc();
+        wakeup_idle(total_ic);
+        error = LTC680x_rdstat(0,total_ic,ic);
+        for (int cic = 0; cic < total_ic; cic++)
+        {
+          for (int channel=0; channel< ic[cic].ic_reg.stat_channels; channel++)
+          {
+            if (ic[cic].stat.stat_codes[channel] >= 65280)
+            {
+              error = error+1;
+            }
+          }
+        }
+        break;
+
+      default:
+        error = -1;
+        break;
+    }
+  }
+  return(error);
+}
+
+//Runs the datasheet algorithm for open wire
+void LTC680x_run_openwire(uint8_t total_ic, cell_asic ic[])
+{
+  uint16_t OPENWIRE_THRESHOLD = 4000;
+  const uint8_t  N_CHANNELS = ic[0].ic_reg.cell_channels;
+
+  cell_asic pullUp_cell_codes[total_ic];
+  cell_asic pullDwn_cell_codes[total_ic];
+  cell_asic openWire_delta[total_ic];
+  int8_t error;
+
+  wakeup_sleep(total_ic);
+  LTC680x_adow(MD_7KHZ_3KHZ,PULL_UP_CURRENT);
+  LTC680x_pollAdc();
+  wakeup_idle(total_ic);
+  LTC680x_adow(MD_7KHZ_3KHZ,PULL_UP_CURRENT);
+  LTC680x_pollAdc();
+  wakeup_idle(total_ic);
+  error = LTC680x_rdcv(0, total_ic,pullUp_cell_codes);
+
+  wakeup_idle(total_ic);
+  LTC680x_adow(MD_7KHZ_3KHZ,PULL_DOWN_CURRENT);
+  LTC680x_pollAdc();
+  wakeup_idle(total_ic);
+  LTC680x_adow(MD_7KHZ_3KHZ,PULL_DOWN_CURRENT);
+  LTC680x_pollAdc();
+  wakeup_idle(total_ic);
+  error = LTC680x_rdcv(0, total_ic,pullDwn_cell_codes);
+
+  for (int cic=0; cic<total_ic; cic++)
+  {
+    ic[cic].system_open_wire =0;
+    for (int cell=0; cell<N_CHANNELS; cell++)
+    {
+      if (pullDwn_cell_codes[cic].cells.c_codes[cell]>pullUp_cell_codes[cic].cells.c_codes[cell])
+      {
+        openWire_delta[cic].cells.c_codes[cell] = pullDwn_cell_codes[cic].cells.c_codes[cell] - pullUp_cell_codes[cic].cells.c_codes[cell]  ;
+      }
+      else
+      {
+        openWire_delta[cic].cells.c_codes[cell] = 0;
+      }
+
+    }
+  }
+  for (int cic=0; cic<total_ic; cic++)
+  {
+    for (int cell=1; cell<N_CHANNELS; cell++)
+    {
+
+      if (openWire_delta[cic].cells.c_codes[cell]>OPENWIRE_THRESHOLD)
+      {
+        ic[cic].system_open_wire += (1<<cell);
+
+      }
+    }
+    if (pullUp_cell_codes[cic].cells.c_codes[0] == 0)
+    {
+      ic[cic].system_open_wire += 1;
+    }
+    if (pullUp_cell_codes[cic].cells.c_codes[N_CHANNELS-1] == 0)
+    {
+      ic[cic].system_open_wire += (1<<(N_CHANNELS));
+    }
+  }
+}
+
+// Runs the ADC overlap test for the IC
+uint16_t LTC680x_run_adc_overlap(uint8_t total_ic, cell_asic ic[])
+{
+  uint16_t error = 0;
+  int32_t measure_delta =0;
+  int16_t failure_pos_limit = 20;
+  int16_t failure_neg_limit = -20;
+  wakeup_idle(total_ic);
+  LTC680x_adol(MD_7KHZ_3KHZ,DCP_DISABLED);
+  LTC680x_pollAdc();
+  wakeup_idle(total_ic);
+  error = LTC680x_rdcv(0, total_ic,ic);
+  for (int cic = 0; cic<total_ic; cic++)
+  {
+    measure_delta = (int32_t)ic[cic].cells.c_codes[6]-(int32_t)ic[cic].cells.c_codes[7];
+    if ((measure_delta>failure_pos_limit) || (measure_delta<failure_neg_limit))
+    {
+      error = error | (1<<(cic-1));
+    }
+  }
+  return(error);
+}
+
+//Helper function that increments PEC counters
+void LTC680x_check_pec(uint8_t total_ic,uint8_t reg, cell_asic ic[])
+{
+  switch (reg)
+  {
+    case CFGRA:
+      for (int current_ic = 0 ; current_ic < total_ic; current_ic++)
+      {
+        ic[current_ic].crc_count.pec_count = ic[current_ic].crc_count.pec_count + ic[current_ic].config.rx_pec_match;
+        ic[current_ic].crc_count.cfgr_pec = ic[current_ic].crc_count.cfgr_pec + ic[current_ic].config.rx_pec_match;
+      }
+      break;
+
+    case CFGRB:
+      for (int current_ic = 0 ; current_ic < total_ic; current_ic++)
+      {
+        ic[current_ic].crc_count.pec_count = ic[current_ic].crc_count.pec_count + ic[current_ic].configb.rx_pec_match;
+        ic[current_ic].crc_count.cfgr_pec = ic[current_ic].crc_count.cfgr_pec + ic[current_ic].configb.rx_pec_match;
+      }
+      break;
+    case CELL:
+      for (int current_ic = 0 ; current_ic < total_ic; current_ic++)
+      {
+        for (int i=0; i<ic[0].ic_reg.num_cv_reg; i++)
+        {
+          ic[current_ic].crc_count.pec_count = ic[current_ic].crc_count.pec_count + ic[current_ic].cells.pec_match[i];
+          ic[current_ic].crc_count.cell_pec[i] = ic[current_ic].crc_count.cell_pec[i] + ic[current_ic].cells.pec_match[i];
+        }
+      }
+      break;
+    case AUX:
+      for (int current_ic = 0 ; current_ic < total_ic; current_ic++)
+      {
+        for (int i=0; i<ic[0].ic_reg.num_gpio_reg; i++)
+        {
+          ic[current_ic].crc_count.pec_count = ic[current_ic].crc_count.pec_count + (ic[current_ic].aux.pec_match[i]);
+          ic[current_ic].crc_count.aux_pec[i] = ic[current_ic].crc_count.aux_pec[i] + (ic[current_ic].aux.pec_match[i]);
+        }
+      }
+
+      break;
+    case STAT:
+      for (int current_ic = 0 ; current_ic < total_ic; current_ic++)
+      {
+
+        for (int i=0; i<ic[0].ic_reg.num_stat_reg-1; i++)
+        {
+          ic[current_ic].crc_count.pec_count = ic[current_ic].crc_count.pec_count + ic[current_ic].stat.pec_match[i];
+          ic[current_ic].crc_count.stat_pec[i] = ic[current_ic].crc_count.stat_pec[i] + ic[current_ic].stat.pec_match[i];
+        }
+      }
+      break;
+    default:
+      break;
+  }
+}
+
+//Helper Function to reset PEC counters
+void LTC680x_reset_crc_count(uint8_t total_ic, cell_asic ic[])
+{
+  for (int current_ic = 0 ; current_ic < total_ic; current_ic++)
+  {
+    ic[current_ic].crc_count.pec_count = 0;
+    ic[current_ic].crc_count.cfgr_pec = 0;
+    for (int i=0; i<6; i++)
+    {
+      ic[current_ic].crc_count.cell_pec[i]=0;
+
+    }
+    for (int i=0; i<4; i++)
+    {
+      ic[current_ic].crc_count.aux_pec[i]=0;
+    }
+    for (int i=0; i<2; i++)
+    {
+      ic[current_ic].crc_count.stat_pec[i]=0;
+    }
+  }
+}
+
+//Helper function to intialize CFG variables.
+void LTC680x_init_cfg(uint8_t total_ic, cell_asic ic[])
+{
+  bool REFON = true;
+  bool ADCOPT = false;
+  bool gpioBits[5] = {true,true,true,true,true};
+  bool dccBits[12] = {false,false,false,false,false,false,false,false,false,false,false,false};
+  for (uint8_t current_ic = 0; current_ic<total_ic; current_ic++)
+  {
+    for (int j =0; j<6; j++)
+    {
+      ic[current_ic].config.tx_data[j] = 0;
+      ic[current_ic].configb.tx_data[j] = 0;
+    }
+    LTC680x_set_cfgr(current_ic ,ic,REFON,ADCOPT,gpioBits,dccBits);
+
+  }
+}
+
+//Helper function to set CFGR variable
+void LTC680x_set_cfgr(uint8_t nIC, cell_asic ic[], bool refon, bool adcopt, bool gpio[5],bool dcc[12])
+{
+  LTC680x_set_cfgr_refon(nIC,ic,refon);
+  LTC680x_set_cfgr_adcopt(nIC,ic,adcopt);
+  LTC680x_set_cfgr_gpio(nIC,ic,gpio);
+  LTC680x_set_cfgr_dis(nIC,ic,dcc);
+}
+
+//Helper function to set the REFON bit
+void LTC680x_set_cfgr_refon(uint8_t nIC, cell_asic ic[], bool refon)
+{
+  if (refon) ic[nIC].config.tx_data[0] = ic[nIC].config.tx_data[0]|0x04;
+  else ic[nIC].config.tx_data[0] = ic[nIC].config.tx_data[0]&0xFB;
+}
+
+//Helper function to set the adcopt bit
+void LTC680x_set_cfgr_adcopt(uint8_t nIC, cell_asic ic[], bool adcopt)
+{
+  if (adcopt) ic[nIC].config.tx_data[0] = ic[nIC].config.tx_data[0]|0x01;
+  else ic[nIC].config.tx_data[0] = ic[nIC].config.tx_data[0]&0xFE;
+}
+
+//Helper function to set GPIO bits
+void LTC680x_set_cfgr_gpio(uint8_t nIC, cell_asic ic[],bool gpio[5])
+{
+  for (int i =0; i<5; i++)
+  {
+    if (gpio[i])ic[nIC].config.tx_data[0] = ic[nIC].config.tx_data[0]|(0x01<<(i+3));
+    else ic[nIC].config.tx_data[0] = ic[nIC].config.tx_data[0]&(~(0x01<<(i+3)));
+  }
+}
+
+//Helper function to control discharge
+void LTC680x_set_cfgr_dis(uint8_t nIC, cell_asic ic[],bool dcc[12])
+{
+  for (int i =0; i<8; i++)
+  {
+    if (dcc[i])ic[nIC].config.tx_data[4] = ic[nIC].config.tx_data[4]|(0x01<<i);
+    else ic[nIC].config.tx_data[4] = ic[nIC].config.tx_data[4]& (~(0x01<<i));
+  }
+  for (int i =0; i<4; i++)
+  {
+    if (dcc[i+8])ic[nIC].config.tx_data[5] = ic[nIC].config.tx_data[5]|(0x01<<i);
+    else ic[nIC].config.tx_data[5] = ic[nIC].config.tx_data[5]&(~(0x01<<i));
+  }
+}
+
+//Helper Function to set uv value in CFG register
+void LTC680x_set_cfgr_uv(uint8_t nIC, cell_asic ic[],uint16_t uv)
+{
+  uint16_t tmp = (uv/16)-1;
+  ic[nIC].config.tx_data[1] = 0x00FF & tmp;
+  ic[nIC].config.tx_data[2] = ic[nIC].config.tx_data[2]&0xF0;
+  ic[nIC].config.tx_data[2] = ic[nIC].config.tx_data[2]|((0x0F00 & tmp)>>8);
+}
+
+//helper function to set OV value in CFG register
+void LTC680x_set_cfgr_ov(uint8_t nIC, cell_asic ic[],uint16_t ov)
+{
+  uint16_t tmp = (ov/16);
+  ic[nIC].config.tx_data[3] = 0x00FF & (tmp>>4);
+  ic[nIC].config.tx_data[2] = ic[nIC].config.tx_data[2]&0x0F;
+  ic[nIC].config.tx_data[2] = ic[nIC].config.tx_data[2]|((0x000F & tmp)<<4);
+}
+
+//Writes the comm register
+void LTC680x_wrcomm(uint8_t total_ic, //The number of ICs being written to
+                    cell_asic ic[]
+                   )
+{
+  uint8_t cmd[2]= {0x07 , 0x21};
+  uint8_t write_buffer[256];
+  uint8_t write_count = 0;
+  uint8_t c_ic = 0;
+  for (uint8_t current_ic = 0; current_ic<total_ic; current_ic++)
+  {
+    if (ic->isospi_reverse == true)
+    {
+      c_ic = current_ic;
+    }
+    else
+    {
+      c_ic = total_ic - current_ic - 1;
+    }
+
+    for (uint8_t data = 0; data<6; data++)
+    {
+      write_buffer[write_count] = ic[c_ic].com.tx_data[data];
+      write_count++;
+    }
+  }
+  write_68(total_ic, cmd, write_buffer);
+}
+
+/*
+Reads COMM registers of a LTC6804 daisy chain
+*/
+int8_t LTC680x_rdcomm(uint8_t total_ic, //Number of ICs in the system
+                      cell_asic ic[]
+                     )
+{
+  uint8_t cmd[2]= {0x07 , 0x22};
+  uint8_t read_buffer[256];
+  int8_t pec_error = 0;
+  uint16_t data_pec;
+  uint16_t calc_pec;
+  uint8_t c_ic=0;
+  pec_error = read_68(total_ic, cmd, read_buffer);
+  for (uint8_t current_ic = 0; current_ic<total_ic; current_ic++)
+  {
+    if (ic->isospi_reverse == false)
+    {
+      c_ic = current_ic;
+    }
+    else
+    {
+      c_ic = total_ic - current_ic - 1;
+    }
+
+    for (int byte=0; byte<8; byte++)
+    {
+      ic[c_ic].com.rx_data[byte] = read_buffer[byte+(8*current_ic)];
+    }
+    calc_pec = pec15_calc(6,&read_buffer[8*current_ic]);
+    data_pec = read_buffer[7+(8*current_ic)] | (read_buffer[6+(8*current_ic)]<<8);
+    if (calc_pec != data_pec )
+    {
+      ic[c_ic].com.rx_pec_match = 1;
+    }
+    else ic[c_ic].com.rx_pec_match = 0;
+  }
+  return(pec_error);
+}
+
+/*
+Shifts data in COMM register out over LTC6804 SPI/I2C port
+*/
+void LTC680x_stcomm()
+{
+
+  uint8_t cmd[4];
+  uint16_t cmd_pec;
+
+  cmd[0] = 0x07;
+  cmd[1] = 0x23;
+  cmd_pec = pec15_calc(2, cmd);
+  cmd[2] = (uint8_t)(cmd_pec >> 8);
+  cmd[3] = (uint8_t)(cmd_pec);
+
+  cs_low();
+  spi_write_array(4,cmd);
+  for (int i = 0; i<9; i++)
+  {
+    spi_read_byte(0xFF);
+  }
+  cs_high();
+
+}
+
+// Writes the pwm register
+void LTC680x_wrpwm(uint8_t total_ic,
+                   uint8_t pwmReg,
+                   cell_asic ic[]
+                  )
+{
+  uint8_t cmd[2];
+  uint8_t write_buffer[256];
+  uint8_t write_count = 0;
+  uint8_t c_ic = 0;
+  if (pwmReg == 0)
+  {
+    cmd[0] = 0x00;
+    cmd[1] = 0x20;
+  }
+  else
+  {
+    cmd[0] = 0x00;
+    cmd[1] = 0x1C;
+  }
+
+  for (uint8_t current_ic = 0; current_ic<total_ic; current_ic++)
+  {
+    if (ic->isospi_reverse == true)
+    {
+      c_ic = current_ic;
+    }
+    else
+    {
+      c_ic = total_ic - current_ic - 1;
+    }
+    for (uint8_t data = 0; data<6; data++)
+    {
+      write_buffer[write_count] = ic[c_ic].pwm.tx_data[data];
+      write_count++;
+    }
+  }
+  write_68(total_ic, cmd, write_buffer);
+}
+
+
+/*
+Reads pwm registers of a LTC6804 daisy chain
+*/
+int8_t LTC680x_rdpwm(uint8_t total_ic, //Number of ICs in the system
+                     uint8_t pwmReg,
+                     cell_asic ic[]
+                    )
+{
+  const uint8_t BYTES_IN_REG = 8;
+
+  uint8_t cmd[4];
+  uint8_t read_buffer[256];
+  int8_t pec_error = 0;
+  uint16_t data_pec;
+  uint16_t calc_pec;
+  uint8_t c_ic = 0;
+
+  if (pwmReg == 0)
+  {
+    cmd[0] = 0x00;
+    cmd[1] = 0x22;
+  }
+  else
+  {
+    cmd[0] = 0x00;
+    cmd[1] = 0x1E;
+  }
+
+
+  pec_error = read_68(total_ic, cmd, read_buffer);
+  for (uint8_t current_ic =0; current_ic<total_ic; current_ic++)
+  {
+    if (ic->isospi_reverse == false)
+    {
+      c_ic = current_ic;
+    }
+    else
+    {
+      c_ic = total_ic - current_ic - 1;
+    }
+    for (int byte=0; byte<8; byte++)
+    {
+      ic[c_ic].pwm.rx_data[byte] = read_buffer[byte+(8*current_ic)];
+    }
+    calc_pec = pec15_calc(6,&read_buffer[8*current_ic]);
+    data_pec = read_buffer[7+(8*current_ic)] | (read_buffer[6+(8*current_ic)]<<8);
+    if (calc_pec != data_pec )
+    {
+      ic[c_ic].pwm.rx_pec_match = 1;
+    }
+    else ic[c_ic].pwm.rx_pec_match = 0;
+  }
+  return(pec_error);
+}
+
+
+void LTC6804_init_reg_limits(uint8_t total_ic, cell_asic ic[])
+{
+  for (uint8_t cic=0; cic<total_ic; cic++)
+  {
+    ic[cic].ic_reg.cell_channels=12;
+    ic[cic].ic_reg.stat_channels=4;
+    ic[cic].ic_reg.aux_channels=6;
+    ic[cic].ic_reg.num_cv_reg=4;
+    ic[cic].ic_reg.num_gpio_reg=2;
+    ic[cic].ic_reg.num_stat_reg=3;
+  }
+}
+
+
+/*
+Starts cell voltage conversion
+*/
+void LTC6804_adcv(
+  uint8_t MD, //ADC Mode
+  uint8_t DCP, //Discharge Permit
+  uint8_t CH //Cell Channels to be measured
+)
+{
+  LTC680x_adcv(MD,DCP,CH);
+}
+
+//Starts cell voltage and SOC conversion
+void LTC6804_adcvsc(
+  uint8_t MD, //ADC Mode
+  uint8_t DCP //Discharge Permit
+)
+{
+  LTC680x_adcvsc(MD,DCP);
+}
+
+// Starts cell voltage  and GPIO 1&2 conversion
+void LTC6804_adcvax(
+  uint8_t MD, //ADC Mode
+  uint8_t DCP //Discharge Permit
+)
+{
+  LTC680x_adcvax(MD,DCP);
+}
+
+//Starts cell voltage overlap conversion
+void LTC6804_adol(
+  uint8_t MD, //ADC Mode
+  uint8_t DCP //Discharge Permit
+)
+{
+  LTC680x_adol(MD,DCP);
+}
+
+//Starts cell voltage self test conversion
+void LTC6804_cvst(
+  uint8_t MD, //ADC Mode
+  uint8_t ST //Self Test
+)
+{
+  LTC680x_cvst(MD,ST);
+}
+
+//Start an Auxiliary Register Self Test Conversion
+void LTC6804_axst(
+  uint8_t MD, //ADC Mode
+  uint8_t ST //Self Test
+)
+{
+  LTC680x_axst(MD,ST);
+}
+
+//Start a Status Register Self Test Conversion
+void LTC6804_statst(
+  uint8_t MD, //ADC Mode
+  uint8_t ST //Self Test
+)
+{
+  LTC680x_statst(MD,ST);
+}
+
+//Sends the poll adc command
+uint8_t LTC6804_pladc()
+{
+  return(LTC680x_pladc());
+}
+
+//This function will block operation until the ADC has finished it's conversion
+uint32_t LTC6804_pollAdc()
+{
+  return(LTC680x_pollAdc());
+}
+
+//Start a GPIO and Vref2 Conversion
+void LTC6804_adax(
+  uint8_t MD, //ADC Mode
+  uint8_t CHG //GPIO Channels to be measured)
+)
+{
+  LTC680x_adax(MD,CHG);
+}
+
+//Start an GPIO Redundancy test
+void LTC6804_adaxd(
+  uint8_t MD, //ADC Mode
+  uint8_t CHG //GPIO Channels to be measured)
+)
+{
+  LTC680x_adaxd(MD,CHG);
+}
+
+//Start a Status ADC Conversion
+void LTC6804_adstat(
+  uint8_t MD, //ADC Mode
+  uint8_t CHST //GPIO Channels to be measured
+)
+{
+  LTC680x_adstat(MD,CHST);
+}
+
+// Start a Status register redundancy test Conversion
+void LTC6804_adstatd(
+  uint8_t MD, //ADC Mode
+  uint8_t CHST //GPIO Channels to be measured
+)
+{
+  LTC680x_adstatd(MD,CHST);
+}
+
+
+// Start an open wire Conversion
+void LTC6804_adow(
+  uint8_t MD, //ADC Mode
+  uint8_t PUP //Discharge Permit
+)
+{
+  LTC680x_adow(MD,PUP);
+}
+
+// Reads and parses the LTC6804 cell voltage registers.
+uint8_t LTC6804_rdcv(uint8_t reg, // Controls which cell voltage register is read back.
+                     uint8_t total_ic, // the number of ICs in the system
+                     cell_asic ic[] // Array of the parsed cell codes
+                    )
+{
+
+  int8_t pec_error = 0;
+  pec_error = LTC680x_rdcv(reg,total_ic,ic);
+  return(pec_error);
+}
+
+/*
+ The function is used
+ to read the  parsed GPIO codes of the LTC6804. This function will send the requested
+ read commands parse the data and store the gpio voltages in aux_codes variable
+*/
+int8_t LTC6804_rdaux(uint8_t reg, //Determines which GPIO voltage register is read back.
+                     uint8_t total_ic,//the number of ICs in the system
+                     cell_asic ic[]//A two dimensional array of the gpio voltage codes.
+                    )
+{
+  int8_t pec_error = 0;
+  pec_error = LTC680x_rdaux(reg,total_ic,ic);
+  return (pec_error);
+}
+
+/*
+ Reads and parses the LTC6804 stat registers.
+ The function is used
+ to read the  parsed stat codes of the LTC6804. This function will send the requested
+ read commands parse the data and store the stat voltages in stat_codes variable
+*/
+int8_t LTC6804_rdstat(uint8_t reg, //Determines which Stat  register is read back.
+                      uint8_t total_ic,//the number of ICs in the system
+                      cell_asic ic[]
+                     )
+{
+  int8_t pec_error = 0;
+  pec_error = LTC680x_rdstat(reg,total_ic,ic);
+  return (pec_error);
+}
+
+/*
+ The command clears the cell voltage registers and intiallizes
+ all values to 1. The register will read back hexadecimal 0xFF
+ after the command is sent.
+*/
+void LTC6804_clrcell()
+{
+  LTC680x_clrcell();
+}
+
+/*
+ The command clears the Auxiliary registers and initializes
+ all values to 1. The register will read back hexadecimal 0xFF
+ after the command is sent.
+*/
+void LTC6804_clraux()
+{
+  LTC680x_clraux();
+}
+
+/*
+ The command clears the Stat registers and intiallizes
+ all values to 1. The register will read back hexadecimal 0xFF
+ after the command is sent.
+
+*/
+void LTC6804_clrstat()
+{
+  LTC680x_clrstat();
+}
+
+/*
+ The command clears the Sctrl registers and initializes
+ all values to 0. The register will read back hexadecimal 0x00
+ after the command is sent.
+ */
+void LTC6804_clrsctrl()
+{
+  LTC680x_clrsctrl();
+}
+
+//Starts the Mux Decoder diagnostic self test
+void LTC6804_diagn()
+{
+  LTC680x_diagn();
+}
+
+/*
+ This command will write the configuration registers of the LTC6804-1s
+ connected in a daisy chain stack. The configuration is written in descending
+ order so the last device's configuration is written first.
+*/
+void LTC6804_wrcfg(uint8_t total_ic, //The number of ICs being written to
+                   cell_asic ic[] //A two dimensional array of the configuration data that will be written
+                  )
+{
+  LTC680x_wrcfg(total_ic,ic);
+}
+
+
+/*
+Reads configuration registers of a LTC6804 daisy chain
+*/
+int8_t LTC6804_rdcfg(uint8_t total_ic, //Number of ICs in the system
+                     cell_asic ic[] //A two dimensional array that the function stores the read configuration data.
+                    )
+{
+  int8_t pec_error = 0;
+  pec_error = LTC680x_rdcfg(total_ic,ic);
+  return(pec_error);
+}
+
+/*
+Writes the pwm registers of a LTC6804 daisy chain
+*/
+void LTC6804_wrpwm(uint8_t total_ic,
+                   uint8_t pwmReg,  //The number of ICs being written to
+                   cell_asic ic[] //A two dimensional array of the configuration data that will be written
+                  )
+{
+  LTC680x_wrpwm(total_ic,pwmReg,ic);
+}
+
+
+/*
+Reads pwm registers of a LTC6804 daisy chain
+*/
+int8_t LTC6804_rdpwm(uint8_t total_ic, //Number of ICs in the system
+                     uint8_t pwmReg,
+                     cell_asic ic[] //A two dimensional array that the function stores the read configuration data.
+                    )
+{
+  int8_t pec_error =0;
+  pec_error = LTC680x_rdpwm(total_ic,pwmReg,ic);
+  return(pec_error);
+}
+
+/*
+Writes the COMM registers of a LTC6804 daisy chain
+*/
+void LTC6804_wrcomm(uint8_t total_ic, //The number of ICs being written to
+                    cell_asic ic[] //A two dimensional array of the comm data that will be written
+                   )
+{
+  LTC680x_wrcomm(total_ic,ic);
+}
+
+/*
+Reads COMM registers of a LTC6804 daisy chain
+*/
+int8_t LTC6804_rdcomm(uint8_t total_ic, //Number of ICs in the system
+                      cell_asic ic[] //A two dimensional array that the function stores the read configuration data.
+                     )
+{
+  int8_t pec_error = 0;
+  LTC680x_rdcomm(total_ic, ic);
+  return(pec_error);
+}
+
+/*
+Shifts data in COMM register out over LTC6804 SPI/I2C port
+*/
+void LTC6804_stcomm()
+{
+  LTC680x_stcomm();
+}
+
+//Helper function to set discharge bit in CFG register
+void LTC6804_set_discharge(int Cell, uint8_t total_ic, cell_asic ic[])
+{
+  for (int i=0; i<total_ic; i++)
+  {
+    if (Cell<9)
+    {
+      ic[i].config.tx_data[4] = ic[i].config.tx_data[4] | (1<<(Cell-1));
+    }
+    else if (Cell < 13)
+    {
+      ic[i].config.tx_data[5] = ic[i].config.tx_data[5] | (1<<(Cell-9));
+    }
+  }
+}
+
+// Runs the Digital Filter Self Test
+int16_t LTC6804_run_cell_adc_st(uint8_t adc_reg,uint8_t total_ic, cell_asic ic[])
+{
+  int16_t error = 0;
+  error = LTC680x_run_cell_adc_st(adc_reg,total_ic,ic);
+  return(error);
+}
+
+//runs the redundancy self test
+int16_t LTC6804_run_adc_redundancy_st(uint8_t adc_mode, uint8_t adc_reg, uint8_t total_ic, cell_asic ic[])
+{
+  int16_t error = 0;
+  LTC680x_run_adc_redundancy_st(adc_mode,adc_reg,total_ic,ic);
+  return(error);
+}
+//Runs the datasheet algorithm for open wire
+void LTC6804_run_openwire(uint8_t total_ic, cell_asic ic[])
+{
+  LTC680x_run_openwire(total_ic,ic);
+}
+// Runs the ADC overlap test for the IC
+uint16_t LTC6804_run_adc_overlap(uint8_t total_ic, cell_asic ic[])
+{
+  uint16_t error = 0;
+  LTC680x_run_adc_overlap(total_ic, ic);
+  return(error);
+}
+
+void LTC6804_max_min(uint8_t total_ic, cell_asic ic_cells[],
+                     cell_asic ic_min[],
+                     cell_asic ic_max[],
+                     cell_asic ic_delta[])
+{
+  for (int j=0; j < total_ic; j++)
+  {
+    for (int i = 0; i< 12; i++)
+    {
+      if (ic_cells[j].cells.c_codes[i]>ic_max[j].cells.c_codes[i])ic_max[j].cells.c_codes[i]=ic_cells[j].cells.c_codes[i];
+      else if (ic_cells[j].cells.c_codes[i]<ic_min[j].cells.c_codes[i])ic_min[j].cells.c_codes[i]=ic_cells[j].cells.c_codes[i];
+      ic_delta[j].cells.c_codes[i] = ic_max[j].cells.c_codes[i] - ic_min[j].cells.c_codes[i];
+    }
+  }
+
+
+
+
+}
+
+void LTC6804_init_max_min(uint8_t total_ic, cell_asic ic[],cell_asic ic_max[],cell_asic ic_min[])
+{
+  for (int j=0; j < total_ic; j++)
+  {
+    for (int i = 0; i< ic[j].ic_reg.cell_channels; i++)
+    {
+      ic_max[j].cells.c_codes[i]=0;
+      ic_min[j].cells.c_codes[i]=0xFFFF;
+    }
+  }
+
+}
+
+//Helper function that increments PEC counters
+void LTC6804_check_pec(uint8_t total_ic,uint8_t reg, cell_asic ic[])
+{
+  LTC680x_check_pec(total_ic,reg,ic);
+}
+
+//Helper Function to reset PEC counters
+void LTC6804_reset_crc_count(uint8_t total_ic, cell_asic ic[])
+{
+  LTC680x_reset_crc_count(total_ic,ic);
+}
+
+//Helper function to intialize CFG variables.
+void LTC6804_init_cfg(uint8_t total_ic, cell_asic ic[])
+{
+  LTC680x_init_cfg(total_ic,ic);
+}
+//Helper function to set CFGR variable
+void LTC6804_set_cfgr(uint8_t nIC, cell_asic ic[], bool refon, bool adcopt, bool gpio[5],bool dcc[12])
+{
+  LTC680x_set_cfgr_refon(nIC,ic,refon);
+  LTC680x_set_cfgr_adcopt(nIC,ic,adcopt);
+  LTC680x_set_cfgr_gpio(nIC,ic,gpio);
+  LTC680x_set_cfgr_dis(nIC,ic,dcc);
+}
+//Helper function to set the REFON bit
+void LTC6804_set_cfgr_refon(uint8_t nIC, cell_asic ic[], bool refon)
+{
+  LTC680x_set_cfgr_refon(nIC,ic,refon);
+}
+//Helper function to set the adcopt bit
+void LTC6804_set_cfgr_adcopt(uint8_t nIC, cell_asic ic[], bool adcopt)
+{
+  LTC680x_set_cfgr_adcopt(nIC,ic,adcopt);
+}
+//Helper function to set GPIO bits
+void LTC6804_set_cfgr_gpio(uint8_t nIC, cell_asic ic[],bool gpio[5])
+{
+  LTC680x_set_cfgr_gpio(nIC,ic,gpio);
+}
+//Helper function to control discharge
+void LTC6804_set_cfgr_dis(uint8_t nIC, cell_asic ic[],bool dcc[12])
+{
+  LTC680x_set_cfgr_dis(nIC,ic,dcc);
+}
+//Helper Function to set uv value in CFG register
+void LTC6804_set_cfgr_uv(uint8_t nIC, cell_asic ic[],uint16_t uv)
+{
+  LTC680x_set_cfgr_uv(nIC, ic, uv);
+}
+//helper function to set OV value in CFG register
+void LTC6804_set_cfgr_ov(uint8_t nIC, cell_asic ic[],uint16_t ov)
+{
+  LTC680x_set_cfgr_ov( nIC, ic, ov);
+}

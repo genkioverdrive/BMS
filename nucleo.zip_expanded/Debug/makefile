@@ -34,34 +34,34 @@ $(wildcard ../makefile.init) \
 $(wildcard ../makefile.targets) \
 
 
-BUILD_ARTIFACT_NAME := nucleo.zip_expanded
+BUILD_ARTIFACT_NAME := bmsinnicleo
 BUILD_ARTIFACT_EXTENSION := elf
 BUILD_ARTIFACT_PREFIX :=
 BUILD_ARTIFACT := $(BUILD_ARTIFACT_PREFIX)$(BUILD_ARTIFACT_NAME)$(if $(BUILD_ARTIFACT_EXTENSION),.$(BUILD_ARTIFACT_EXTENSION),)
 
 # Add inputs and outputs from these tool invocations to the build variables 
 EXECUTABLES += \
-nucleo.zip_expanded.elf \
+bmsinnicleo.elf \
 
 MAP_FILES += \
-nucleo.zip_expanded.map \
+bmsinnicleo.map \
 
 SIZE_OUTPUT += \
 default.size.stdout \
 
 OBJDUMP_LIST += \
-nucleo.zip_expanded.list \
+bmsinnicleo.list \
 
 
 # All Target
 all: main-build
 
 # Main-build Target
-main-build: nucleo.zip_expanded.elf secondary-outputs
+main-build: bmsinnicleo.elf secondary-outputs
 
 # Tool invocations
-nucleo.zip_expanded.elf nucleo.zip_expanded.map: $(OBJS) $(USER_OBJS) C:\Users\User\STM32CubeIDE\BMS\ Master\nucleo.zip_expanded\STM32L476RGTX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "nucleo.zip_expanded.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"C:\Users\User\STM32CubeIDE\BMS Master\nucleo.zip_expanded\STM32L476RGTX_FLASH.ld" --specs=nosys.specs -Wl,-Map="nucleo.zip_expanded.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -u _printf_float -Wl,--start-group -lc -lm -Wl,--end-group
+bmsinnicleo.elf bmsinnicleo.map: $(OBJS) $(USER_OBJS) C:\Users\verma\OneDrive\Desktop\Team\ OJAS\BMS_DEV\BMS\nucleo.zip_expanded\STM32L476RGTX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "bmsinnicleo.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"C:\Users\verma\OneDrive\Desktop\Team OJAS\BMS_DEV\BMS\nucleo.zip_expanded\STM32L476RGTX_FLASH.ld" --specs=nosys.specs -Wl,-Map="bmsinnicleo.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -u _printf_float -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 
@@ -70,14 +70,14 @@ default.size.stdout: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
 	@echo 'Finished building: $@'
 	@echo ' '
 
-nucleo.zip_expanded.list: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-objdump -h -S $(EXECUTABLES) > "nucleo.zip_expanded.list"
+bmsinnicleo.list: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-objdump -h -S $(EXECUTABLES) > "bmsinnicleo.list"
 	@echo 'Finished building: $@'
 	@echo ' '
 
 # Other Targets
 clean:
-	-$(RM) default.size.stdout nucleo.zip_expanded.elf nucleo.zip_expanded.list nucleo.zip_expanded.map
+	-$(RM) bmsinnicleo.elf bmsinnicleo.list bmsinnicleo.map default.size.stdout
 	-@echo ' '
 
 secondary-outputs: $(SIZE_OUTPUT) $(OBJDUMP_LIST)

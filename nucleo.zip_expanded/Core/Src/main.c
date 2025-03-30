@@ -21,7 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "LTC.h"
+#include "LTC6804.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -31,7 +31,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define TOTAL_IC 1
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -47,7 +47,14 @@ TIM_HandleTypeDef htim6;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-
+cell_asic bms_ic[TOTAL_IC];	//the cell_asic struct objects
+//LTC CONFIGURATION VARIABLES
+bool REFON = true; //!< Reference Powered Up Bit (true means Vref remains powered on between conversions)
+bool ADCOPT = true; //!< ADC Mode option bit	(true chooses the second set of ADC frequencies)
+bool gpioBits_a[5] = {false,false,false,false,false}; //!< GPIO Pin Control // Gpio 1,2,3,4,5 (false -> pull-down on)
+bool dccBits_a[12] = {false,false,false,false,false,false,false,false,false,false,false,false}; //!< Discharge cell switch //Dcc 1,2,3,4,5,6,7,8,9,10,11,12 (all false -> no discharge enabled)
+bool dctoBits[4] = {false, false, false, false}; //!< Discharge time value // Dcto 0,1,2,3	(all false -> discharge timer disabled)
+float voltages[12];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -57,7 +64,7 @@ static void MX_USART2_UART_Init(void);
 static void MX_SPI2_Init(void);
 static void MX_TIM6_Init(void);
 /* USER CODE BEGIN PFP */
-
+void LTC6804_init(void);	//Initializes the LTC and the SPI communication
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -73,7 +80,8 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-
+  LTC6804_init();
+  char msg[100];
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -98,22 +106,25 @@ int main(void)
   MX_SPI2_Init();
   MX_TIM6_Init();
   /* USER CODE BEGIN 2 */
-	HAL_TIM_Base_Start(&htim6);
+  HAL_TIM_Base_Start(&htim6);
 
-	LTC6804_SerialWake();
-	LTC6804_Init();
-	init_PEC15_Table();
-	LTC6804_ReadConfig();
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-//	  Transmit();
-	  LTC6804_ReadConfig();
-	  delay_ms(1000);
-//	  HAL_UART_Transmit(&huart2, (uint8_t*)"hello world!", strlen("hello world!"), 100);
+	  wakeup_idle(TOTAL_IC);
+	  LTC6804_adcv(MD_7KHZ_3KHZ, DCP_DISABLED, CELL_CH_ALL);
+	  int error = LTC6804_rdcv(CELL_CH_ALL, TOTAL_IC, bms_ic);
+	  for(int i=0;i<12;i++) {
+		  voltages[i] = bms_ic[0].cells.c_codes[i] * 0.0001;
+		  snprintf(msg,strlen(msg),"cell %d: %f V ",i+1,voltages[i]);
+		  HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+
+	  }
+	  HAL_Delay(1000);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -300,7 +311,7 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0|LD2_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, CS_Pin|LD2_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : B1_Pin */
   GPIO_InitStruct.Pin = B1_Pin;
@@ -308,8 +319,8 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PA0 LD2_Pin */
-  GPIO_InitStruct.Pin = GPIO_PIN_0|LD2_Pin;
+  /*Configure GPIO pins : CS_Pin LD2_Pin */
+  GPIO_InitStruct.Pin = CS_Pin|LD2_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -320,7 +331,17 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-
+void LTC6804_init(){
+	LTC6804_init_cfg(TOTAL_IC, bms_ic);	//Initializes the confiugration registers to all 0s
+	//This for loop initializes the configuration register variables
+	for (uint8_t current_ic = 0; current_ic<TOTAL_IC;current_ic++) {
+		LTC6804_set_cfgr(current_ic,bms_ic,REFON,ADCOPT,gpioBits_a,dccBits_a);
+	}
+	LTC6804_reset_crc_count(TOTAL_IC,bms_ic);	//sets the CRC count to 0
+	LTC6804_init_reg_limits(TOTAL_IC, bms_ic);	//Initializes the LTC's register limits for LTC6811 (because the generic LTC681x libraries can also be used for LTC6813 and others)
+	wakeup_sleep(TOTAL_IC);
+	LTC6804_wrcfg(TOTAL_IC,bms_ic);	//writes the configuration variables in the configuration registers via SPI
+}
 /* USER CODE END 4 */
 
 /**
