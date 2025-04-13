@@ -3,4 +3,4 @@
 ../Core/Src/LT_SPI.c:22:6:spi_write	32	static
 ../Core/Src/LT_SPI.c:27:6:spi_write_array	32	static
 ../Core/Src/LT_SPI.c:39:6:spi_write_read	40	static
-../Core/Src/LT_SPI.c:60:9:spi_read_byte	32	static
+../Core/Src/LT_SPI.c:53:9:spi_read_byte	32	static

@@ -40,18 +40,11 @@ void spi_write_read(uint8_t  tx_Data[],uint8_t  tx_len,uint8_t* rx_data,uint8_t 
     uint8_t i;
     uint8_t data;
 
-    // Transfer data to LTC6803
+    // Transfer data to LTC6804
     for ( i = 0; i < tx_len; i++ )
     {
         // Transmit byte.
         HAL_SPI_TransmitReceive(&hspi2, (uint8_t*)&tx_Data[i], &data, 1, HAL_MAX_DELAY);
-    }
-
-    // Receive data from DC2259A board.
-    for ( i = 0; i < rx_len; i++ )
-    {
-        // Receive byte.
-        HAL_SPI_TransmitReceive(&hspi2, (uint8_t*)0xFF, (uint8_t*)&rx_data[i], 1, HAL_MAX_DELAY);
     }
 }
 

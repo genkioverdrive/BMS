@@ -43,10 +43,14 @@
 SPI_HandleTypeDef hspi2;
 
 TIM_HandleTypeDef htim6;
+TIM_HandleTypeDef htim7;
+TIM_HandleTypeDef htim16;
 
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
+
+
 cell_asic bms_ic[TOTAL_IC];	//the cell_asic struct objects
 //LTC CONFIGURATION VARIABLES
 bool REFON = true; //!< Reference Powered Up Bit (true means Vref remains powered on between conversions)
@@ -55,6 +59,10 @@ bool gpioBits_a[5] = {false,false,false,false,false}; //!< GPIO Pin Control // G
 bool dccBits_a[12] = {false,false,false,false,false,false,false,false,false,false,false,false}; //!< Discharge cell switch //Dcc 1,2,3,4,5,6,7,8,9,10,11,12 (all false -> no discharge enabled)
 bool dctoBits[4] = {false, false, false, false}; //!< Discharge time value // Dcto 0,1,2,3	(all false -> discharge timer disabled)
 float voltages[12];
+
+// timer variables
+uint8_t adc_on = 0;
+uint8_t read_adc = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -63,8 +71,11 @@ static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_SPI2_Init(void);
 static void MX_TIM6_Init(void);
+static void MX_TIM7_Init(void);
+static void MX_TIM16_Init(void);
 /* USER CODE BEGIN PFP */
 void LTC6804_init(void);	//Initializes the LTC and the SPI communication
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim); //timer isr
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -80,8 +91,7 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-  LTC6804_init();
-  char msg[100];
+
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -105,9 +115,12 @@ int main(void)
   MX_USART2_UART_Init();
   MX_SPI2_Init();
   MX_TIM6_Init();
+  MX_TIM7_Init();
+  MX_TIM16_Init();
   /* USER CODE BEGIN 2 */
   HAL_TIM_Base_Start(&htim6);
-
+  LTC6804_init();
+  char msg[64];
 
   /* USER CODE END 2 */
 
@@ -115,17 +128,31 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  wakeup_idle(TOTAL_IC);
-	  LTC6804_adcv(MD_7KHZ_3KHZ, DCP_DISABLED, CELL_CH_ALL);
-	  int error = LTC6804_rdcv(CELL_CH_ALL, TOTAL_IC, bms_ic);
-	  for(int i=0;i<12;i++) {
-		  voltages[i] = bms_ic[0].cells.c_codes[i] * 0.0001;
-		  snprintf(msg,strlen(msg),"cell %d: %f V ",i+1,voltages[i]);
-		  HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-
+	  if(adc_on == 1){
+		  wakeup_idle(TOTAL_IC);
+		  LTC6804_adcv(MD_7KHZ_3KHZ, DCP_DISABLED, CELL_CH_ALL);
+		  adc_on = 0;
 	  }
-	  HAL_Delay(1000);
-    /* USER CODE END WHILE */
+	  if(read_adc == 1){
+		  wakeup_idle(TOTAL_IC);
+		  int error = LTC6804_rdcv(CELL_CH_ALL, TOTAL_IC, bms_ic);
+		  for(int i=0;i<12;i++) {
+		  		  voltages[i] = bms_ic[0].cells.c_codes[i] * 0.0001;
+		  }
+		  read_adc = 0;
+	  }
+
+	  sprintf(msg, "cell 1: %0.2f, cell 2: %0.2f, cell 3: %0.2f, "
+	               "cell 4: %0.2f, cell 5: %0.2f, cell 6: %0.2f, "
+	               "cell 7: %0.2f, cell 8: %0.2f, cell 9: %0.2f, "
+	               "cell 10: %0.2f, cell 11: %0.2f, cell 12: %0.2f",
+	          voltages[0], voltages[1], voltages[2],
+	          voltages[3], voltages[4], voltages[5],
+	          voltages[6], voltages[7], voltages[8],
+	          voltages[9], voltages[10], voltages[11]);
+	  HAL_UART_Transmit(&huart2, msg, strlen(msg), HAL_MAX_DELAY);
+	  HAL_Delay(250);
+	  /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
   }
@@ -201,7 +228,7 @@ static void MX_SPI2_Init(void)
   hspi2.Init.Direction = SPI_DIRECTION_2LINES;
   hspi2.Init.DataSize = SPI_DATASIZE_8BIT;
   hspi2.Init.CLKPolarity = SPI_POLARITY_HIGH;
-  hspi2.Init.CLKPhase = SPI_PHASE_1EDGE;
+  hspi2.Init.CLKPhase = SPI_PHASE_2EDGE;
   hspi2.Init.NSS = SPI_NSS_SOFT;
   hspi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_256;
   hspi2.Init.FirstBit = SPI_FIRSTBIT_MSB;
@@ -209,7 +236,7 @@ static void MX_SPI2_Init(void)
   hspi2.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
   hspi2.Init.CRCPolynomial = 7;
   hspi2.Init.CRCLength = SPI_CRC_LENGTH_DATASIZE;
-  hspi2.Init.NSSPMode = SPI_NSS_PULSE_ENABLE;
+  hspi2.Init.NSSPMode = SPI_NSS_PULSE_DISABLE;
   if (HAL_SPI_Init(&hspi2) != HAL_OK)
   {
     Error_Handler();
@@ -238,7 +265,7 @@ static void MX_TIM6_Init(void)
 
   /* USER CODE END TIM6_Init 1 */
   htim6.Instance = TIM6;
-  htim6.Init.Prescaler = 32-1;
+  htim6.Init.Prescaler = 31;
   htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim6.Init.Period = 65535;
   htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
@@ -255,6 +282,76 @@ static void MX_TIM6_Init(void)
   /* USER CODE BEGIN TIM6_Init 2 */
 
   /* USER CODE END TIM6_Init 2 */
+
+}
+
+/**
+  * @brief TIM7 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM7_Init(void)
+{
+
+  /* USER CODE BEGIN TIM7_Init 0 */
+
+  /* USER CODE END TIM7_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM7_Init 1 */
+
+  /* USER CODE END TIM7_Init 1 */
+  htim7.Instance = TIM7;
+  htim7.Init.Prescaler = 31;
+  htim7.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim7.Init.Period = 4000-1;
+  htim7.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim7) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim7, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM7_Init 2 */
+
+  /* USER CODE END TIM7_Init 2 */
+
+}
+
+/**
+  * @brief TIM16 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM16_Init(void)
+{
+
+  /* USER CODE BEGIN TIM16_Init 0 */
+
+  /* USER CODE END TIM16_Init 0 */
+
+  /* USER CODE BEGIN TIM16_Init 1 */
+
+  /* USER CODE END TIM16_Init 1 */
+  htim16.Instance = TIM16;
+  htim16.Init.Prescaler = 31;
+  htim16.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim16.Init.Period = 4000-1;
+  htim16.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim16.Init.RepetitionCounter = 0;
+  htim16.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim16) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM16_Init 2 */
+
+  /* USER CODE END TIM16_Init 2 */
 
 }
 
@@ -341,6 +438,15 @@ void LTC6804_init(){
 	LTC6804_init_reg_limits(TOTAL_IC, bms_ic);	//Initializes the LTC's register limits for LTC6811 (because the generic LTC681x libraries can also be used for LTC6813 and others)
 	wakeup_sleep(TOTAL_IC);
 	LTC6804_wrcfg(TOTAL_IC,bms_ic);	//writes the configuration variables in the configuration registers via SPI
+}
+
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
+	if(htim->Instance == TIM7){
+		adc_on = 1;
+	}
+	if(htim->Instance == TIM16){
+		read_adc = 1;
+	}
 }
 /* USER CODE END 4 */
 
